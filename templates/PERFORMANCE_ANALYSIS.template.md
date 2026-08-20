@@ -16,6 +16,8 @@
 
 > **Mode statement:** Mode: {Analyze Only | Analyze & Fix | Fix & Report} — {no code was changed. | fixes proposed for approval. | changes were applied per the approved permission grant.}
 
+> **Report coverage:** **{100% complete | ~X% complete}** — {all validation checks ran and passed | N of M validation checks ran; pending: {check} — {permission denied / unavailable — reason}. Full report: {100% complete | X% done — pending command runs listed in Validation Notes}.}
+
 ## Summary
 
 {2–4 sentences: what was reviewed, the single real bottleneck (named), overall severity, and — if fixes were applied — the headline result.}
@@ -54,15 +56,19 @@
 
 | Check | Command | Result |
 |-------|---------|--------|
-| TypeScript | `npm run typecheck` (or `tsc --noEmit`) | {✅ pass | ⚠️ unverified until run} |
+| TypeScript | `npm run typecheck` (or `tsc --noEmit`) | {✅ pass | ❌ fail — {error} | ⛔ permission denied | ⏭ unavailable — {reason}} |
 | Lint | `npm run lint` | {…} |
-| Tests | `npm test` | {…} |
+| Tests | `npm test` (or repo's test command) | {…} |
 | Android release | `cd android && ./gradlew assembleRelease` | {…} |
 | iOS | `cd ios && pod install` (+ Release scheme) | {…} |
+| Bundle size | `npx react-native bundle --entry-file index.js --platform ios --dev false --bundle-output /tmp/{app}_bundle.js` → `ls -lh` | {…} |
 | Profiler | {React DevTools / Hermes / Android Studio / Instruments} | {…} |
 | {Custom check} | {exact command} | {…} |
 
-<!-- Any check not run MUST be listed with the exact command and marked "unverified until run". -->
+<!-- Result legend: ✅ pass · ❌ fail (paste error) · ⛔ permission denied · ⏭ unavailable (state why).
+     Attempt EVERY applicable command during the run. A check that did not run is still listed
+     here with its exact command and the real reason — never silently omitted. Update the
+     Report Coverage line at the top of the report to match. -->
 
 ## Manual Testing Steps
 

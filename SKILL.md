@@ -94,7 +94,8 @@ Map the response:
 
 The user keeps control over the skill's **decisions**, but the skill's **internal tasks** are never interrupted. This is how:
 
-- **Internal tasks never prompt.** Reading files, searching, inspecting screens/components, running read-only checks, and writing report files are internal — always run uninterrupted.
+- **Internal tasks never prompt.** Reading files, searching, inspecting screens/components, running read-only checks (typecheck, lint, tests, bundle-size, config inspection), and writing report files are internal — always run uninterrupted.
+- **Validation builds are attempted, then recorded.** Build/install commands (`./gradlew assembleRelease`, `pod install`) may raise a permission prompt in the host agent. Attempt each once; if rejected, record **"permission denied"** in the report's Validation section and continue — never silently omit the check.
 - **Approval points exist only at mode boundaries:**
   1. Selecting the execution mode (start).
   2. Approving the fix plan after the analysis report (Mode 2).
@@ -107,7 +108,7 @@ The user keeps control over the skill's **decisions**, but the skill's **interna
 ## Core Behavior Contract (non-negotiable)
 
 1. **Find the real bottleneck — do not blindly optimize.** Every fix must trace to a concrete named cause (heavy/inline `renderItem`, unstable prop, missing cleanup, blocking startup call). Do not sprinkle `useMemo`/`useCallback`/`React.memo` "just in case." Premature memoization is a defect, not a fix.
-2. **Never claim performance is fixed without validation.** A change that "looks faster" is not proof. Validate: typecheck, lint, tests, a release build, and a profiler trace where available (React DevTools Profiler, Hermes profiler, Android Studio Profiler, Xcode Instruments, Flipper/Sentry only if already integrated). If you can't run a check, give the exact command and mark it **"unverified until run."**
+2. **Validate by RUNNING commands, not by listing them.** A change that "looks faster" is not proof. During the validation phase, attempt every applicable check (typecheck, lint, tests, bundle size, release build, profiler trace) so the report is complete on delivery. Record each outcome — ✅ pass, ❌ fail, ⛔ permission denied, or ⏭ unavailable. If a check is permission-rejected or the environment can't run it, state that in the report — never silently skip it and never defer it to "later." Never judge final performance from a debug build.
 3. **Always separate debug-mode from release-mode performance.** Debug JS is dramatically slower (no Hermes optimizations, dev warnings, remote debugging). Never judge final performance from a debug build. Label every observation debug/release; prefer release builds for final verdicts. Turn OFF remote JS debugging when measuring.
 4. **Make surgical edits only.** Touch the minimum needed. No refactors, reformatting, dependency churn, or architecture changes "while you're in there." Follow the project's existing patterns (TS vs JS, state library, navigation library, list component).
 5. **Protect the project.** Do not remove business logic, change app behavior, break Android/iOS builds, touch signing configs, or change package name / bundle identifier. Do not remove existing analytics, crash reporting, or monitoring without explicit approval.
@@ -146,7 +147,7 @@ android/app/build.gradle  android/gradle.properties  ios/Podfile
    - **Mode 2:** produce the analysis report → present the fix plan → **await approval** → apply fixes → short change summary.
    - **Mode 3:** produce the analysis report (internal) → apply fixes → write `PERFORMANCE_CHANGES.md` final report. No pause between these.
 5. **Apply focused, safe fixes** (modes 2 and 3) that match project conventions and preserve behavior.
-6. **Validate** — typecheck + lint + tests + release build where possible + profiler trace where available. Mark anything you couldn't run.
+6. **Validate by running commands** — typecheck + lint + tests + bundle size + release build + profiler trace. Attempt every applicable command during the run and record each result (✅ pass / ❌ fail / ⛔ permission denied / ⏭ unavailable) in the report's Validation section. See "Validation Commands — Run, Don't List." A report with unrun checks is not complete.
 7. **Report** according to the mode's deliverable (see Output Format below) — client-ready.
 
 **Agents without shell access:** produce exact edits + copy-paste validation/build commands, and mark results **"needs user verification."**
@@ -273,13 +274,48 @@ cd ios && pod install
 
 ---
 
-## Commands To Run When Possible
+## Validation Commands — Run, Don't List
+
+Validation is part of the analysis, not a follow-up. **Attempt every applicable command during the run** so the report ships complete. Never write "unverified until run" and defer it — run it now, or record the exact reason it could not run.
 
 ```bash
-npm run typecheck   # or tsc --noEmit
+# Read-only checks — always run, run first (covered by the permission contract)
+npm run typecheck                            # or: tsc --noEmit
 npm run lint
-npm test
+npm test                                     # or the repo's test command, e.g. ENVFILE=.env.test npx jest
+
+# Bundle size — read-only, always run
+npx react-native bundle --entry-file index.js --platform ios --dev false --bundle-output /tmp/{app}_bundle.js
+ls -lh /tmp/{app}_bundle.js                  # record the size
+
+# Android release build — attempt; may be permission-gated
+cd android && ./gradlew assembleRelease
+
+# iOS — attempt; requires Xcode, may be permission-gated
+cd ios && pod install                        # then build with the Release scheme
+
+# Config confirmation — read-only, always run
+# android/gradle.properties -> hermesEnabled / newArchEnabled
+# ios/Podfile -> :hermes_enabled / :new_arch_enabled
+
+# Profiler trace — where available (may need a device/simulator)
+# React Native DevTools Profiler (re-renders / commit times)
+# Hermes profiler (JS CPU), Android Studio Profiler (CPU/memory)
+# Xcode Instruments (Time Profiler / Allocations / Leaks)
 ```
+
+**Recording results — exactly one outcome per check:**
+
+- **✅ pass** — ran clean.
+- **❌ fail** — ran with errors; paste the key error into the Result cell.
+- **⛔ permission denied** — the user / host agent rejected the command; write "permission denied" in the Result cell — never silently omit it.
+- **⏭ unavailable** — toolchain missing (no Android SDK / Xcode / pod) or the repo lacks the script; state the reason.
+
+**Rules:**
+1. Read-only checks (typecheck, lint, tests, bundle size, config confirmation) run inside the permission contract — do not pause for them.
+2. Build/install commands (gradle, pod install) may raise a permission prompt. Attempt each once; if rejected, record **⛔ permission denied** and move on — do not retry in a loop.
+3. If the environment cannot run a check, record **⏭ unavailable** with the reason.
+4. Compute the **Report Coverage** line from these results: **100% complete** when every applicable check has a recorded outcome, otherwise **~X% complete** with the pending items listed.
 
 ---
 
@@ -310,17 +346,18 @@ npm test
 3. If the template files are not present, reproduce the identical structure inline from the section lists below — never invent a new layout.
 4. Fill all fields (project, RN version, Expo SDK, platforms, scope, build mode, date, mode statement) in the header block on every report.
 5. Keep the `Issues Found` / `Files Changed` / `Validation` tables in the template's shape — one row per issue/file/check, severity always Critical/High/Medium/Low, and every issue traced to `file:line`.
-6. Any check you could not run is listed with its exact command and marked **"unverified until run"** — never omitted.
+6. Attempt every applicable validation command during the run; record each outcome (✅ pass / ❌ fail / ⛔ permission denied / ⏭ unavailable). A check that did not run is still listed, with the exact command and the real reason — never silently omitted.
+7. Include the **Report Coverage** line in the header block: completion percentage (100% or X%) plus exactly which checks are still pending and why. This tells the reader at a glance whether the report is complete or partial.
 
 ### Mode 1 — Analyze Only: `PERFORMANCE_ANALYSIS.md`
 
 Generate from `PERFORMANCE_ANALYSIS.template.md`. Required sections (in template order):
 
-1. **Header block** — mode, project, RN/Expo versions, platforms, scope, build mode, date, mode statement.
+  1. **Header block** — mode, project, RN/Expo versions, platforms, scope, build mode, date, mode statement, and **Report Coverage** (completion % + pending items).
 2. **Summary** — what was reviewed, which screens/actions, debug vs release.
 3. **Issues Found** — table, each with severity (Critical/High/Medium/Low), traced to specific code.
 4. **Recommended Fixes** — per issue: surgical fix, files affected, risk (do not apply in this mode).
-5. **Validation Notes** — checks run; anything unrun marked **"unverified until run"** with the exact command.
+5. **Validation Notes** — every applicable command attempted; each result recorded (✅ pass / ❌ fail / ⛔ permission denied / ⏭ unavailable); unrun checks listed with the exact command and the reason.
 6. **Manual Testing Steps** — how to reproduce/confirm on device.
 7. **Remaining Risks** — real-device/production items.
 8. **Next Steps** — what to do next (including "run Mode 2/3 with this report").
@@ -340,12 +377,12 @@ End-to-end without pausing. Generate BOTH files from the templates:
 
 - `PERFORMANCE_ANALYSIS.md` — from `PERFORMANCE_ANALYSIS.template.md` (as Mode 1).
 - `PERFORMANCE_CHANGES.md` — from `PERFORMANCE_CHANGES.template.md`, required sections (in template order):
-  1. **Header block** — mode, project, RN/Expo versions, platforms, scope, build mode, date, mode statement.
+1. **Header block** — mode, project, RN/Expo versions, platforms, scope, build mode, date, mode statement, and **Report Coverage** (completion % + pending items).
   2. **Summary** — what was analyzed and changed.
   3. **Issues Found** — table, severity, traced to code.
   4. **Files Changed** — table: each file and why.
   5. **Fixes Applied** — one block per issue, tied back to the Issues Found table by number.
-  6. **Validation** — commands run and results; unrun checks marked **"unverified until run."**
+  6. **Validation** — every applicable command attempted and its result recorded (✅ pass / ❌ fail / ⛔ permission denied / ⏭ unavailable); unrun checks listed with the exact command and reason.
   7. **Manual Testing Steps** — steps to test the affected screens.
   8. **Remaining Risks** — anything needing real-device testing or production monitoring.
   9. **Next Steps** — recommendations.
@@ -358,8 +395,8 @@ Complete only when:
 - The reported bottleneck is identified and traced to specific code, **and**
 - The selected mode's deliverable is produced (report file for Mode 1; report + approved fixes for Mode 2; report + fixes + final report for Mode 3), **and**
 - Fixes (modes 2/3) are surgical, match project conventions, and preserve behavior, **and**
-- Validation has been run (typecheck/lint/test/release build/profiler where possible) or unrun checks are explicitly flagged **"unverified until run,"** **and**
-- The report is client-ready and the mode is stated explicitly.
+- Every applicable validation command was attempted and its result recorded (✅ pass / ❌ fail / ⛔ permission denied / ⏭ unavailable), **and**
+- The report is client-ready, states the mode explicitly, and includes the **Report Coverage** line (completion % + pending items).
 
 ---
 
@@ -425,8 +462,10 @@ export const FeedCard = React.memo(function FeedCard({ post, liked, onToggleLike
 - [ ] Project structure reviewed; RN version checked; Expo version checked if applicable
 - [ ] Navigation, heavy screens, FlatList/SectionList, images, state management, native modules, and memory-leak risks reviewed
 - [ ] Hermes config checked (not blindly toggled); debug vs release mode considered
-- [ ] Android build checked where possible; iOS build checked where possible; TypeScript/lint checked where possible
+- [ ] Every applicable validation command attempted: typecheck + lint + tests + bundle size + release build + profiler; each result recorded (✅ pass / ❌ fail / ⛔ permission denied / ⏭ unavailable)
+- [ ] Android build attempted where possible; iOS build attempted where possible
 - [ ] Fix plan presented before editing (Mode 2); edits surgical and behavior-preserving
 - [ ] No edits made in Mode 1; mode stated explicitly in the deliverable
+- [ ] **Report Coverage** line at the top of the report: completion % + pending items
 - [ ] Manual testing steps written; remaining risks listed
 - [ ] Final report is client-ready (Summary, Issues+severity, Files Changed, Fixes, Validation, Manual Steps, Risks, Next Steps)
