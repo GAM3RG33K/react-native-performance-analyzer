@@ -2,7 +2,7 @@
 name: react-native-performance-analyzer
 title: React Native Performance Analyzer
 description: Analyze, improve, and validate React Native app performance. Use when an RN app has slow startup, laggy scrolling, FlatList/SectionList issues, unnecessary re-renders, slow navigation, heavy screens, memory leaks, large bundle size, or poor Android/iOS release performance — and you need real bottlenecks found, safe fixes applied, and results validated in release mode. Supports analyze-only, analyze-and-fix, and fix-with-final-report execution modes.
-version: 0.0.1
+version: 0.0.2
 license: MIT
 platform: react-native
 tags: [react-native, expo, performance, flatlist, rendering, re-renders, memory-leak, hermes, bundle-size, startup, navigation, profiling, analysis, validation]
